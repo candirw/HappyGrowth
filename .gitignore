@@ -1,0 +1,8 @@
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# 未来 kb/ 等子目录若放到同仓库，索引与缓存不入库（按需取消注释）
+# kb/data/
+# kb/.distiller.db
