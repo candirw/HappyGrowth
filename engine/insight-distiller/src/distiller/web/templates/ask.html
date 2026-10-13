@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}问答 · Insight Distiller{% endblock %}
+
+{% block content %}
+<div class="qa">
+  <div id="scope" class="hidden" style="margin-bottom:16px">
+    <span class="tag" id="scope-label"></span>
+    <button class="chip" id="scope-clear">改为全库检索</button>
+  </div>
+
+  <div id="thread">
+    <div class="empty">
+      <strong>基于你的知识库提问</strong>
+      回答会带出处；资料没提到的会明确说明，不编造。
+      <div style="margin-top:20px">
+        <button class="chip demo">这些内容里有哪些结论互相冲突？</button>
+        <button class="chip demo">帮我梳理一下核心方法论</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <textarea id="q" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+    <button class="primary" id="send">发送</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const params = new URLSearchParams(location.search);
+let sourceId = params.get('source') ? parseInt(params.get('source')) : null;
+const thread = document.getElementById('thread');
+
+if (sourceId) {
+  document.getElementById('scope').classList.remove('hidden');
+  document.getElementById('scope-label').textContent = '只问 #' + sourceId;
+  api.get('/sources/' + sourceId)
+     .then(d => document.getElementById('scope-label').textContent = '只问《' + d.source.title + '》')
+     .catch(() => {});
+}
+document.getElementById('scope-clear').onclick = () => {
+  sourceId = null;
+  document.getElementById('scope').classList.add('hidden');
+};
+
+/* 把回答里的 markdown 子集渲染成 HTML。
+   刻意不引入 marked.js —— 回答格式受 prompt 约束，
+   只需处理段落/列表/加粗/行内代码，几十行就够，省一个依赖。 */
+function renderText(src) {
+  const lines = String(src).split('\n');
+  let html = '', inList = false;
+  const inline = s => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/\[(\d+)\]/g, '<span class="n">[$1]</span>');
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    const li = line.match(/^[-*]\s+(.*)$/) || line.match(/^\d+\.\s+(.*)$/);
+    if (li) {
+      if (!inList) { html += '<ul class="points">'; inList = true; }
+      html += `<li>${inline(li[1])}</li>`;
+      continue;
+    }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (!line) continue;
+    const h = line.match(/^#{1,4}\s+(.*)$/);
+    html += h ? `<h3>${inline(h[1])}</h3>` : `<p>${inline(line)}</p>`;
+  }
+  if (inList) html += '</ul>';
+  return html || '<p class="muted">（空回答）</p>';
+}
+
+function bubble(cls, inner) {
+  const b = el(`<div class="bubble ${cls}"><div class="body">${inner}</div></div>`);
+  thread.append(b);
+  b.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  return b;
+}
+
+async function ask(question) {
+  if (!question.trim()) return;
+  if (thread.querySelector('.empty')) thread.innerHTML = '';
+
+  bubble('me', esc(question));
+  const pending = bubble('ai', '<span class="spinner"></span> 检索并思考中…');
+  const btn = document.getElementById('send');
+  btn.disabled = true;
+
+  try {
+    const r = await api.post('/ask', { question, source_id: sourceId });
+    let html = renderText(r.text);
+
+    if (r.hits && r.hits.length) {
+      html += '<div class="cites"><div class="small muted" style="margin-bottom:8px">引用来源</div>';
+      r.hits.forEach((h, i) => {
+        const loc = h.anchor ? ` @ ${esc(h.anchor)}` : '';
+        const routes = h.routes.length ? ` · ${esc(h.routes.join('+'))}` : '';
+        html += `<a class="cite" href="/read/${h.source_id}">
+          <span class="n">[${i + 1}]</span>${esc(h.title)}${loc}
+          <span class="muted small">${routes}</span>
+          <div class="snippet">${esc(h.text)}</div></a>`;
+      });
+      html += '</div>';
+    }
+    if (r.cost) {
+      html += `<div class="small muted" style="margin-top:10px">本次花费 ${fmtCost(r.cost)}</div>`;
+    }
+    pending.querySelector('.body').innerHTML = html;
+    loadTopbar();
+  } catch (e) {
+    pending.querySelector('.body').innerHTML =
+      `<div class="error">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const ta = document.getElementById('q');
+ta.oninput = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+ta.onkeydown = e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const v = ta.value; ta.value = ''; ta.style.height = 'auto';
+    ask(v);
+  }
+};
+document.getElementById('send').onclick = () => {
+  const v = ta.value; ta.value = ''; ta.style.height = 'auto';
+  ask(v);
+};
+document.querySelectorAll('.demo').forEach(b => b.onclick = () => ask(b.textContent));
+</script>
+{% endblock %}

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}简报 · Insight Distiller{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="font-size:20px;margin:0">知识简报</h1>
+  <span class="spacer"></span>
+  <select id="days">
+    <option value="7">近 7 天</option>
+    <option value="14">近 14 天</option>
+    <option value="30">近 30 天</option>
+    <option value="90">近 90 天</option>
+  </select>
+  <span class="small muted">零 LLM 成本</span>
+</div>
+
+<div id="body"><p class="muted"><span class="spinner"></span> 统计中…</p></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function section(title, inner, cls) {
+  return inner ? `<h2 ${cls ? `style="color:${cls}"` : ''}>${title}</h2>${inner}` : '';
+}
+
+async function load(days) {
+  const box = document.getElementById('body');
+  try {
+    const b = await api.get('/brief?' + new URLSearchParams({ days }));
+    if (b.is_empty) {
+      box.innerHTML = `<div class="empty"><strong>这段时间没有新增内容</strong>
+        知识库也没有待处理项。</div>`;
+      return;
+    }
+
+    let html = `<div class="stats">
+      <div class="stat"><b>${b.new_count}</b><span>本期新增</span></div>
+      <div class="stat"><b>${Math.round(b.total_chars / 1000)}k</b><span>字数</span></div>
+      <div class="stat"><b>${b.due_reviews}</b><span>待重温</span></div>
+      <div class="stat"><b>${b.contradictions.length}</b><span>结论冲突</span></div>
+      <div class="stat"><b>${b.pending_actions.length}</b><span>悬置待办</span></div>
+    </div>`;
+
+    /* 冲突放最前 —— 认知升级多来自这里 */
+    if (b.contradictions.length) {
+      html += section('⚠️ 需要你判断的结论冲突', b.contradictions.map(c => `
+        <div class="card">
+          <div class="small muted" style="margin-bottom:7px">
+            <a href="/read/${c.from_id}">#${c.from_id} ${esc(c.from_title)}</a>
+            ↔ <a href="/read/${c.to_id}">#${c.to_id} ${esc(c.to_title)}</a>
+          </div>
+          ${c.new_claim ? `<div class="claims" style="border-color:var(--conflict)">
+            <div><strong>前者</strong>：${esc(c.new_claim)}</div>
+            <div><strong>后者</strong>：${esc(c.old_claim)}</div></div>`
+            : (c.note ? `<div class="claims">${esc(c.note)}</div>` : '')}
+        </div>`).join(''), 'var(--conflict)');
+    }
+
+    if (b.pending_actions.length) {
+      html += section('📌 悬着的可执行项', `<div class="card">${
+        b.pending_actions.map(a => `<div class="note">
+          <div>${esc(a.text)}</div>
+          <div class="small muted" style="margin-top:3px">
+            <a href="/read/${a.source_id}">#${a.source_id} ${esc(a.title)}</a>
+            ${a.age_days ? ` · ${a.age_days} 天前` : ''}</div>
+        </div>`).join('')}</div>`);
+    }
+
+    if (b.answered_questions.length) {
+      html += section('🎯 旧疑问已有答案', `<div class="card">${
+        b.answered_questions.map(q => `<div class="note">
+          <div>${esc(q.text)}</div>
+          <div class="small muted" style="margin-top:3px">→
+            <a href="/read/${q.answer_id}">${esc(q.answer_title || '')}</a></div>
+        </div>`).join('')}</div>`);
+    }
+
+    if (b.top_content.length) {
+      html += section('本期高密度内容', b.top_content.map(c => `
+        <a class="card list-card" href="/read/${c.id}">
+          <h3>${esc(c.title)}</h3>
+          <div class="meta">${densityHtml({
+            score: c.density, level: c.density >= 65 ? 'high' : c.density >= 40 ? 'mid' : 'low',
+            pct: Math.round(c.density || 0), verdict: '' })}
+            <span class="dot"><span class="tag plain">${esc(c.type)}</span></span></div>
+        </a>`).join(''));
+    }
+
+    if (b.gaps.length) {
+      html += section('知识盲区', `<div class="card">${
+        b.gaps.map(g => `<div class="note"><strong>${esc(g.name)}</strong>
+          <span class="muted small"> 提及 ${g.count} 次</span>
+          <div class="small muted">${esc(g.detail)}</div></div>`).join('')}</div>`);
+    }
+
+    if (b.open_questions.length) {
+      html += section('仍未解决的疑问', `<div class="card">${
+        b.open_questions.map(q => `<div class="note">${esc(q.text)}</div>`).join('')}</div>`);
+    }
+
+    if (b.my_notes.length) {
+      html += section('我的批注', `<div class="card">${
+        b.my_notes.map(n => `<div class="note">
+          <span class="tag plain">${esc(n.note_type)}</span> ${esc(n.text)}
+          <div class="small muted"><a href="/read/${n.source_id}">#${n.source_id} ${esc(n.title)}</a></div>
+        </div>`).join('')}</div>`);
+    }
+
+    if (b.low_value.length) {
+      html += section('低密度内容提示', `<div class="card">
+        <p class="small muted" style="margin:0 0 8px">本期以下内容密度偏低，可考虑调整信息源：</p>${
+        b.low_value.map(c => `<div class="small muted">
+          <a href="/read/${c.id}">#${c.id} ${esc(c.title)}</a> · ${c.density}</div>`).join('')}</div>`);
+    }
+
+    html += `<p class="small muted" style="margin-top:28px">
+      统计区间自 ${b.since} · 本月 LLM 花费 ${fmtCost(b.cost_usd)}</p>`;
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="error">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('days').onchange = e => load(e.target.value);
+load(7);
+</script>
+{% endblock %}

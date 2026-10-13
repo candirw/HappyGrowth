@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}内容库 · Insight Distiller{% endblock %}
+
+{% block content %}
+<div class="stats" id="stats"></div>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="搜标题或作者…">
+  <select id="sort">
+    <option value="recent">最近消化</option>
+    <option value="density">信息密度</option>
+    <option value="title">标题</option>
+  </select>
+  <button class="chip" id="only-high" title="只看密度 ≥ 65 的内容">只看高密度</button>
+  <span class="spacer"></span>
+  <span class="small muted" id="count"></span>
+</div>
+
+<div id="facets" class="toolbar"></div>
+<div id="list"><p class="muted"><span class="spinner"></span> 加载中…</p></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let state = { sort: 'recent', q: '', domain: null, type: null, minDensity: null };
+
+async function loadStats() {
+  try {
+    const s = await api.get('/stats');
+    document.getElementById('stats').innerHTML = `
+      <div class="stat"><b>${s.sources}</b><span>已消化</span></div>
+      <div class="stat"><b>${s.avg_density ?? '—'}</b><span>平均密度</span></div>
+      <div class="stat"><b>${s.claims}</b><span>知识单元</span></div>
+      <div class="stat"><b>${s.review.due}</b><span>待重温</span></div>
+      <div class="stat"><b>${s.open_questions}</b><span>未解疑问</span></div>`;
+  } catch (e) { /* 统计失败不影响列表 */ }
+}
+
+function facetChip(label, count, active, onClick) {
+  const b = el(`<button class="chip ${active ? 'on' : ''}">${esc(label)} <span class="muted">${count}</span></button>`);
+  b.onclick = onClick;
+  return b;
+}
+
+async function load() {
+  const list = document.getElementById('list');
+  const p = new URLSearchParams({ sort: state.sort });
+  if (state.q) p.set('q', state.q);
+  if (state.domain) p.set('domain', state.domain);
+  if (state.type) p.set('content_type', state.type);
+  if (state.minDensity) p.set('min_density', state.minDensity);
+
+  try {
+    const data = await api.get('/sources?' + p);
+    document.getElementById('count').textContent = data.total + ' 篇';
+
+    const facets = document.getElementById('facets');
+    facets.innerHTML = '';
+    for (const [name, n] of Object.entries(data.facets.domains)) {
+      facets.append(facetChip(name, n, state.domain === name, () => {
+        state.domain = state.domain === name ? null : name; load();
+      }));
+    }
+    for (const [name, n] of Object.entries(data.facets.content_types)) {
+      facets.append(facetChip(name, n, state.type === name, () => {
+        state.type = state.type === name ? null : name; load();
+      }));
+    }
+
+    if (!data.items.length) {
+      list.innerHTML = `<div class="empty"><strong>还没有内容</strong>
+        用 <code>distill add &lt;url&gt;</code> 消化第一篇，
+        或 <code>distill find "…"</code> 用自然语言选材。</div>`;
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const s of data.items) {
+      const bits = [];
+      if (s.author) bits.push(esc(s.author));
+      if (s.duration) bits.push(s.duration);
+      if (s.publish_at) bits.push(s.publish_at);
+      bits.push(`<span class="tag plain">${esc(s.content_type)}</span>`);
+      for (const d of s.domains) bits.push(`<span class="tag">${esc(d)}</span>`);
+
+      list.append(el(`<a class="card list-card" href="/read/${s.id}">
+        <h3>${esc(s.title)}</h3>
+        <div class="meta">${densityHtml(s.density)}
+          ${bits.map(b => `<span class="dot">${b}</span>`).join('')}</div>
+      </a>`));
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="error">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+let timer;
+document.getElementById('q').oninput = e => {
+  clearTimeout(timer);
+  state.q = e.target.value.trim();
+  timer = setTimeout(load, 220);
+};
+document.getElementById('sort').onchange = e => { state.sort = e.target.value; load(); };
+document.getElementById('only-high').onclick = e => {
+  state.minDensity = state.minDensity ? null : 65;
+  e.target.classList.toggle('on', !!state.minDensity);
+  load();
+};
+
+loadStats(); load();
+</script>
+{% endblock %}

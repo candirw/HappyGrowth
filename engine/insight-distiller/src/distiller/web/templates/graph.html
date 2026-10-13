@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}知识图谱 · Insight Distiller{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="font-size:20px;margin:0">知识图谱</h1>
+  <span class="spacer"></span>
+  <select id="depth">
+    <option value="1">1 层邻域</option>
+    <option value="2">2 层邻域</option>
+    <option value="3">3 层邻域</option>
+  </select>
+  <button class="chip" id="all">看全库</button>
+</div>
+
+<div id="hint" class="small muted" style="margin-bottom:10px"></div>
+<canvas id="graph-canvas"></canvas>
+<div class="legend">
+  <span><i style="background:#b4532a"></i>结论冲突</span>
+  <span><i style="background:#2f7d52"></i>互相印证</span>
+  <span><i style="background:#3b7ea1"></i>引用</span>
+  <span><i style="background:#8a7fa8"></i>延伸补充</span>
+  <span><i style="background:#999"></i>同主题</span>
+  <span class="muted">· 圆点大小代表信息密度 · 拖动可平移，滚轮缩放，点节点跳转</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* 手写力导向布局。
+   不引入 d3（~250KB）——这里只需要斥力+弹簧+向心力三条规则，
+   百来行就能跑，且没有构建步骤。 */
+const REL_COLORS = {
+  contradicts: '#b4532a', supports: '#2f7d52', cites: '#3b7ea1',
+  cited_by: '#3b7ea1', extends: '#8a7fa8', same_topic: '#999',
+  answers: '#2f7d52', prerequisite: '#8a7fa8',
+};
+
+const canvas = document.getElementById('graph-canvas');
+const ctx = canvas.getContext('2d');
+let nodes = [], edges = [], view = { x: 0, y: 0, k: 1 }, hover = null, anim = null;
+
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = r.width * dpr;
+  canvas.height = r.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', () => { resize(); draw(); });
+
+function radius(n) {
+  const s = n.density?.score;
+  return 6 + (s === null || s === undefined ? 2 : (s / 100) * 9);
+}
+
+function layout() {
+  const r = canvas.getBoundingClientRect();
+  const cx = r.width / 2, cy = r.height / 2;
+  nodes.forEach((n, i) => {
+    const a = (i / Math.max(1, nodes.length)) * Math.PI * 2;
+    n.x = cx + Math.cos(a) * 170 + (Math.random() - .5) * 26;
+    n.y = cy + Math.sin(a) * 170 + (Math.random() - .5) * 26;
+    n.vx = n.vy = 0;
+  });
+
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  let step = 0;
+  cancelAnimationFrame(anim);
+
+  (function tick() {
+    // 斥力
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d2 = dx * dx + dy * dy || 0.01;
+        const f = 2600 / d2;
+        const d = Math.sqrt(d2);
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+      }
+    }
+    // 弹簧：置信度越高拉得越紧
+    for (const e of edges) {
+      const a = byId.get(e.source), b = byId.get(e.target);
+      if (!a || !b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const f = (d - 120) * 0.012 * (0.5 + (e.confidence || 0.5));
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+    // 向心力，防止节点飘出画布
+    for (const n of nodes) {
+      n.vx += (cx - n.x) * 0.0035;
+      n.vy += (cy - n.y) * 0.0035;
+      n.x += (n.vx *= 0.82);
+      n.y += (n.vy *= 0.82);
+    }
+    draw();
+    if (++step < 260) anim = requestAnimationFrame(tick);
+  })();
+}
+
+function draw() {
+  const r = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, r.width, r.height);
+  ctx.save();
+  ctx.translate(view.x, view.y);
+  ctx.scale(view.k, view.k);
+
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  for (const e of edges) {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    if (!a || !b) continue;
+    ctx.strokeStyle = REL_COLORS[e.rel_type] || '#bbb';
+    ctx.lineWidth = e.rel_type === 'contradicts' ? 2.2 : 1.3;
+    ctx.globalAlpha = hover && hover !== a && hover !== b ? 0.12 : 0.62;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const css = getComputedStyle(document.body);
+  for (const n of nodes) {
+    const rad = radius(n);
+    const dim = hover && hover !== n &&
+      !edges.some(e => (e.source === n.id && hover.id === e.target) ||
+                       (e.target === n.id && hover.id === e.source));
+    ctx.globalAlpha = dim ? 0.22 : 1;
+    ctx.beginPath(); ctx.arc(n.x, n.y, rad, 0, Math.PI * 2);
+    const lvl = n.density?.level;
+    ctx.fillStyle = lvl === 'high' ? '#2f7d52' : lvl === 'mid' ? '#b08018'
+                  : lvl === 'low' ? '#a04040' : '#8c8c8c';
+    ctx.fill();
+    if (n === hover) {
+      ctx.strokeStyle = css.getPropertyValue('--accent') || '#b4532a';
+      ctx.lineWidth = 2.5; ctx.stroke();
+    }
+    if (view.k > 0.55 || n === hover) {
+      ctx.fillStyle = css.getPropertyValue('--text') || '#222';
+      ctx.font = `${n === hover ? 600 : 400} 12px -apple-system, "PingFang SC", sans-serif`;
+      ctx.textAlign = 'center';
+      const t = n.title.length > 18 ? n.title.slice(0, 18) + '…' : n.title;
+      ctx.fillText(t, n.x, n.y + rad + 14);
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function at(ev) {
+  const r = canvas.getBoundingClientRect();
+  const x = (ev.clientX - r.left - view.x) / view.k;
+  const y = (ev.clientY - r.top - view.y) / view.k;
+  return nodes.find(n => (n.x - x) ** 2 + (n.y - y) ** 2 < (radius(n) + 6) ** 2);
+}
+
+let drag = null;
+canvas.onmousedown = e => drag = { x: e.clientX - view.x, y: e.clientY - view.y };
+canvas.onmouseup = () => drag = null;
+canvas.onmouseleave = () => { drag = null; hover = null; draw(); };
+canvas.onmousemove = e => {
+  if (drag) { view.x = e.clientX - drag.x; view.y = e.clientY - drag.y; draw(); return; }
+  const h = at(e);
+  if (h !== hover) { hover = h; canvas.style.cursor = h ? 'pointer' : 'grab'; draw(); }
+};
+canvas.onclick = e => { const n = at(e); if (n && !drag) location.href = '/read/' + n.id; };
+canvas.onwheel = e => {
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.12 : 0.89;
+  view.k = Math.max(0.25, Math.min(3, view.k * f));
+  draw();
+};
+
+async function load(sourceId, depth) {
+  const p = new URLSearchParams();
+  if (sourceId) { p.set('source_id', sourceId); p.set('depth', depth || 1); }
+  const hint = document.getElementById('hint');
+  try {
+    const d = await api.get('/graph?' + p);
+    nodes = d.nodes; edges = d.edges;
+    if (!nodes.length) {
+      hint.innerHTML = '还没有关系数据。消化 2 篇以上相关内容后会自动建立，' +
+                       '或用 <code>distill link</code> 为历史内容补建。';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    hint.textContent = `${nodes.length} 个节点 · ${edges.length} 条关系` +
+      (sourceId ? `（以 #${sourceId} 为中心）` : '（全库高置信关系）');
+    resize(); layout();
+  } catch (e) {
+    hint.innerHTML = `<span class="error">加载失败：${esc(e.message)}</span>`;
+  }
+}
+
+const params = new URLSearchParams(location.search);
+let curSource = params.get('source') ? parseInt(params.get('source')) : null;
+document.getElementById('depth').onchange = e => load(curSource, e.target.value);
+document.getElementById('all').onclick = () => {
+  curSource = null;
+  history.replaceState(null, '', '/graph');
+  load(null);
+};
+resize();
+load(curSource, 1);
+</script>
+{% endblock %}

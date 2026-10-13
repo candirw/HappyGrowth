@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 运行时数据（可整体拷贝迁移，但不入版本库）
+data/
+
+# 本地配置含 API Key，绝不提交
+config.yaml
+.env
+
+# 用工具跑出来的产物：体积会长、内容属于原作者、对使用者无价值。
+# 说明见 cases/README.md
+cases/
+
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

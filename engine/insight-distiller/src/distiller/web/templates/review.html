@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}重温 · Insight Distiller{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1 style="font-size:20px;margin:0">该回头看的内容</h1>
+  <span class="spacer"></span>
+  <button class="chip" id="upcoming">连未到期的一起看</button>
+</div>
+
+<div class="stats" id="stats"></div>
+<div id="list"><p class="muted"><span class="spinner"></span> 加载中…</p></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let upcoming = false;
+
+const GRADES = [
+  ['forgot', '忘了 / 需重读'],
+  ['ok', '还行 / 有印象'],
+  ['easy', '记得牢 / 可延后'],
+];
+
+async function load() {
+  const list = document.getElementById('list');
+  try {
+    const d = await api.get('/review?' + new URLSearchParams({ upcoming }));
+    document.getElementById('stats').innerHTML = `
+      <div class="stat"><b>${d.stats.due}</b><span>已到期</span></div>
+      <div class="stat"><b>${d.stats.total}</b><span>队列总数</span></div>
+      <div class="stat"><b>${d.stats.starred}</b><span>必看</span></div>
+      <div class="stat"><b>${d.stats.reviewed}</b><span>已重温过</span></div>`;
+
+    if (!d.items.length) {
+      list.innerHTML = d.stats.total === 0
+        ? `<div class="empty"><strong>重温队列为空</strong>
+            消化内容时会自动判定是否值得重温，
+            或执行 <code>distill review --rebuild</code> 为历史内容补建。</div>`
+        : `<div class="empty"><strong>今天没有要重温的</strong>
+            队列共 ${d.stats.total} 篇，均未到期。</div>`;
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const it of d.items) {
+      const overdue = it.overdue_days
+        ? `<span class="dot" style="color:var(--mid)">逾期 ${it.overdue_days} 天</span>` : '';
+      const star = it.starred ? ' ⭐' : '';
+
+      let body = '';
+      if (it.tldr.length) {
+        body += `<ul class="tldr" style="margin-top:14px">${
+          it.tldr.map(t => `<li style="font-size:15.5px">${esc(t)}</li>`).join('')}</ul>`;
+      }
+      if (it.actions.length) {
+        body += `<h2 style="margin:18px 0 8px">待办</h2><ul class="points">${
+          it.actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul>`;
+      }
+      if (it.open_questions.length) {
+        body += `<h2 style="margin:18px 0 8px">存疑</h2><ul class="points">${
+          it.open_questions.map(q => `<li>${esc(q)}</li>`).join('')}</ul>`;
+      }
+      if (it.notes.length) {
+        body += `<h2 style="margin:18px 0 8px">我的批注</h2><ul class="points">${
+          it.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`;
+      }
+
+      const card = el(`<div class="card pad-lg review-card">
+        <div class="meta" style="margin-bottom:6px">
+          ${densityHtml(it.density)}
+          <span class="dot"><span class="tag plain">${esc(it.content_type)}</span></span>
+          <span class="dot">第 ${it.review_count + 1} 次 · 间隔 ${it.interval_days} 天</span>
+          ${overdue}
+        </div>
+        <h3 style="margin:0"><a href="/read/${it.source_id}">${esc(it.title)}${star}</a></h3>
+        <p class="why">为什么推给你：${esc(it.reasons.join('；'))}</p>
+        ${body}
+        <div class="grade-row"></div>
+      </div>`);
+
+      const row = card.querySelector('.grade-row');
+      for (const [val, label] of GRADES) {
+        const b = el(`<button>${label}</button>`);
+        b.onclick = async () => {
+          row.querySelectorAll('button').forEach(x => x.disabled = true);
+          try {
+            const r = await api.post(`/review/${it.source_id}/grade`, { value: val });
+            row.innerHTML = `<span class="small muted">已记录 · 下次 ${r.due_at}（${r.interval_days} 天后）</span>`;
+            card.style.opacity = .55;
+            loadTopbar();
+          } catch (e) {
+            row.innerHTML = `<span class="error">${esc(e.message)}</span>`;
+          }
+        };
+        row.append(b);
+      }
+      list.append(card);
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="error">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+document.getElementById('upcoming').onclick = e => {
+  upcoming = !upcoming;
+  e.target.classList.toggle('on', upcoming);
+  load();
+};
+load();
+</script>
+{% endblock %}

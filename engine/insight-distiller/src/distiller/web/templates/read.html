@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}{{ source.title }} · Insight Distiller{% endblock %}
+{% block main_class %}reader{% endblock %}
+
+{% block content %}
+<article>
+  <h1>{{ source.title }}</h1>
+
+  <div class="meta" style="margin-bottom:18px">
+    <a href="{{ source.url }}" target="_blank" rel="noreferrer">查看原文 ↗</a>
+    {% if source.author %}<span class="dot">{{ source.author }}</span>{% endif %}
+    {% if source.duration %}<span class="dot">{{ source.duration }}</span>{% endif %}
+    {% if source.publish_at %}<span class="dot">{{ source.publish_at }}</span>{% endif %}
+    <span class="dot"><span class="tag plain">{{ source.content_type }}</span></span>
+    {% for d in source.domains %}<span class="tag">{{ d }}</span>{% endfor %}
+  </div>
+
+  {% if not digest %}
+    <div class="empty">
+      <strong>这篇还没浓缩</strong>
+      用 <code>distill add {{ source.url }}</code> 处理它。
+    </div>
+  {% else %}
+
+  <div class="verdict">
+    <strong>信息密度 {{ digest.density.score or '—' }}/100</strong>
+    —— {{ digest.density_verdict or digest.density.verdict }}
+  </div>
+
+  {% if digest.tldr %}
+  <h2>核心结论</h2>
+  <ul class="tldr">
+    {% for t in digest.tldr %}<li>{{ t }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if digest.contrarian %}
+  <h2>反直觉观点</h2>
+  <ul class="points">
+    {% for c in digest.contrarian %}<li>{{ c }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if digest.outline %}
+  <h2>分层大纲</h2>
+  {% for item in digest.outline %}
+    <h3>
+      {{ item.title }}
+      {#- 可跳转的锚点渲染成链接，点一下直接跳到视频那一秒 -#}
+      {% if item.anchor.text %}
+        {% if item.anchor.jumpable %}
+          <a class="anchor" href="{{ item.anchor.url }}" target="_blank"
+             rel="noreferrer" title="跳到原视频 {{ item.anchor.text }}">▸ {{ item.anchor.text }}</a>
+        {% else %}
+          <span class="anchor flat">{{ item.anchor.text }}</span>
+        {% endif %}
+      {% endif %}
+    </h3>
+    <ul class="points">
+      {% for p in item.points %}<li>{{ p }}</li>{% endfor %}
+    </ul>
+  {% endfor %}
+  {% endif %}
+
+  {% if digest.concepts %}
+  <h2>概念与术语</h2>
+  <dl style="margin:0">
+    {% for c in digest.concepts %}
+    <div class="concept"><dt>{{ c.term }}</dt><dd>{{ c.definition }}</dd></div>
+    {% endfor %}
+  </dl>
+  {% endif %}
+
+  {% if digest.quotes %}
+  <h2>金句</h2>
+  {% for q in digest.quotes %}
+  <blockquote class="quote">
+    {{ q.text }}
+    {% if q.anchor.text %}
+      {% if q.anchor.jumpable %}
+        <a class="anchor" href="{{ q.anchor.url }}" target="_blank" rel="noreferrer">▸ {{ q.anchor.text }}</a>
+      {% else %}
+        <span class="anchor flat">{{ q.anchor.text }}</span>
+      {% endif %}
+    {% endif %}
+  </blockquote>
+  {% endfor %}
+  {% endif %}
+
+  {% if digest.actions %}
+  <h2>可执行项</h2>
+  {#- 勾选后写成 done 批注，简报便不再提醒（与 CLI 口径一致） -#}
+  <ul class="checklist" id="actions">
+    {% for a in digest.actions %}
+    <li><input type="checkbox" data-text="{{ a }}"><span>{{ a }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if digest.open_questions %}
+  <h2>存疑与未解</h2>
+  <ul class="points">
+    {% for q in digest.open_questions %}<li>{{ q }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>原文片段</h2>
+  <button id="load-segments">展开原文（可点时间戳跳转）</button>
+  <div id="segments"></div>
+
+  <p class="small muted" style="margin-top:34px;padding-top:14px;border-top:1px solid var(--border)">
+    由 {{ digest.model or '未知模型' }} 生成 · tokens {{ digest.tokens }} · 成本 ${{ '%.4f'|format(digest.cost) }}
+  </p>
+  {% endif %}
+</article>
+
+<aside class="side">
+  <h2>关联</h2>
+  {% if relations %}
+  <div class="card">
+    {% for r in relations %}
+    <a class="rel {{ 'conflict' if r.is_conflict }}" href="/read/{{ r.id }}">
+      <div class="rel-head">
+        <span>{{ r.icon }}</span><span>{{ r.label }}</span>
+        <span class="muted">{{ r.confidence }}</span>
+      </div>
+      <div class="rel-title">{{ r.title }}</div>
+      {% if r.new_claim %}
+      <div class="claims">
+        <div><strong>本文</strong>：{{ r.new_claim }}</div>
+        <div><strong>对方</strong>：{{ r.old_claim }}</div>
+      </div>
+      {% elif r.note %}
+      <div class="claims">{{ r.note }}</div>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="small muted">暂无关联。消化更多内容后会自动建立。</p>
+  {% endif %}
+
+  <h2>我的批注</h2>
+  <div class="card">
+    <div id="notes">
+      {% for n in notes %}
+      <div class="note" data-id="{{ n.id }}">
+        <div class="note-head">
+          <span class="tag plain">{{ n.note_type }}</span>
+          <button class="note-del" title="删除">×</button>
+        </div>
+        <div>{{ n.text }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div id="notes-empty" class="small muted {{ 'hidden' if notes }}">
+      还没有批注。你的思考比 AI 摘要更值钱。
+    </div>
+    <div style="margin-top:12px">
+      <textarea id="note-text" rows="2" placeholder="记下你的想法…"></textarea>
+      <div class="toolbar" style="margin:9px 0 0">
+        <select id="note-type">
+          <option value="comment">想法</option>
+          <option value="insight">洞察</option>
+          <option value="todo">待办</option>
+          <option value="disagree">不同意</option>
+        </select>
+        <button class="primary" id="note-add">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <h2>操作</h2>
+  <div class="card">
+    <button id="star" style="width:100%;margin-bottom:8px">⭐ 标记必看</button>
+    <a href="/ask?source={{ source.id }}" style="display:block">
+      <button style="width:100%">就这篇提问</button>
+    </a>
+    <a href="/graph?source={{ source.id }}" style="display:block;margin-top:8px">
+      <button style="width:100%">看它的关系图</button>
+    </a>
+  </div>
+</aside>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SID = {{ source.id }};
+
+/* 原文片段按需加载：长视频转写可能上万字，不该塞进首屏 */
+const segBtn = document.getElementById('load-segments');
+if (segBtn) segBtn.onclick = async () => {
+  segBtn.disabled = true;
+  segBtn.innerHTML = '<span class="spinner"></span> 加载中…';
+  try {
+    const { segments } = await api.get(`/sources/${SID}/segments`);
+    const box = document.getElementById('segments');
+    box.innerHTML = '';
+    for (const s of segments) {
+      const anchor = s.anchor
+        ? (s.jumpable
+            ? `<a class="anchor" href="${esc(s.url)}" target="_blank" rel="noreferrer">▸ ${esc(s.anchor)}</a>`
+            : `<span class="anchor flat">${esc(s.anchor)}</span>`)
+        : '';
+      box.append(el(`<div class="card"><div style="margin-bottom:6px">${anchor}</div>
+        <div>${esc(s.text)}</div></div>`));
+    }
+    segBtn.classList.add('hidden');
+  } catch (e) {
+    segBtn.disabled = false;
+    segBtn.textContent = '加载失败，重试';
+  }
+};
+
+function renderNote(n) {
+  const d = el(`<div class="note" data-id="${n.id}">
+    <div class="note-head"><span class="tag plain">${esc(n.note_type)}</span>
+      <button class="note-del" title="删除">×</button></div>
+    <div>${esc(n.text)}</div></div>`);
+  d.querySelector('.note-del').onclick = () => delNote(n.id, d);
+  return d;
+}
+
+async function delNote(id, node) {
+  if (!confirm('删除这条批注？')) return;
+  try {
+    await api.del('/notes/' + id);
+    node.remove();
+    toggleNotesEmpty();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+function toggleNotesEmpty() {
+  const has = document.querySelectorAll('#notes .note').length > 0;
+  document.getElementById('notes-empty').classList.toggle('hidden', has);
+}
+
+document.querySelectorAll('#notes .note-del').forEach(b => {
+  const node = b.closest('.note');
+  b.onclick = () => delNote(node.dataset.id, node);
+});
+
+document.getElementById('note-add').onclick = async () => {
+  const ta = document.getElementById('note-text');
+  const text = ta.value.trim();
+  if (!text) return;
+  try {
+    const r = await api.post(`/sources/${SID}/notes`, {
+      text, note_type: document.getElementById('note-type').value,
+    });
+    const box = document.getElementById('notes');
+    box.innerHTML = '';
+    r.notes.forEach(n => box.append(renderNote(n)));
+    ta.value = '';
+    toggleNotesEmpty();
+  } catch (e) { alert('添加失败：' + e.message); }
+};
+
+/* 勾选可执行项 → 写成 done 批注，简报不再提醒（与 CLI 口径一致） */
+document.querySelectorAll('#actions input').forEach(cb => {
+  cb.onchange = async () => {
+    const li = cb.closest('li');
+    li.classList.toggle('done', cb.checked);
+    if (!cb.checked) return;
+    try {
+      await api.post(`/sources/${SID}/notes`, {
+        text: cb.dataset.text, note_type: 'done',
+      });
+    } catch (e) {
+      cb.checked = false;
+      li.classList.remove('done');
+      alert('标记失败：' + e.message);
+    }
+  };
+});
+
+document.getElementById('star').onclick = async (e) => {
+  try {
+    await api.post(`/review/${SID}/star`, { starred: true });
+    e.target.textContent = '⭐ 已标记必看';
+    e.target.disabled = true;
+  } catch (err) { alert('操作失败：' + err.message); }
+};
+</script>
+{% endblock %}

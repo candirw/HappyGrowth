@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-distiller"
+version = "0.1.0"
+description = "把视频/播客/博客/论文压缩成高密度结论，并支持可溯源的 AI 问答"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+
+# M1 核心依赖：全部为纯 Python 或有三平台预编译 wheel，Windows 可直接 pip 安装
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "rich>=13.7",
+    "platformdirs>=4.2",   # 跨平台标准数据目录
+    "trafilatura>=2.0",    # 网页正文抽取
+    "cssselect>=1.2",      # 声明式站点规则的 CSS 选择器（30KB 纯 Python）
+    "browser_cookie3>=0.19",  # 复用浏览器登录态：B站投稿列表/字幕接口需要
+]
+
+[project.optional-dependencies]
+# 音视频转写（M2）。ffmpeg 走 imageio-ffmpeg 自带二进制，免系统依赖
+av = [
+    "imageio-ffmpeg>=0.5",
+    "faster-whisper>=1.0",  # CTranslate2 后端，三平台通用
+    "yt-dlp>=2024.8",
+]
+# OCR：RapidOCR 三平台通用，作为默认实现保证跨平台一致性。
+# 按 Python 版本选包——RapidOCR 在 2.x 改了包名，
+# 旧包 rapidocr-onnxruntime 所有版本都要求 <3.13，
+# 而 python.org 现在默认下载 3.13+，不加标记会让新机器安装直接失败。
+ocr = [
+    "rapidocr-onnxruntime>=1.3; python_version < '3.13'",
+    "rapidocr>=3.0; python_version >= '3.13'",
+]
+# 语义检索（M2）。默认用 SQLite 存向量 + numpy 计算，无需向量库。
+# 个人规模（数万 chunk）性能足够，且跨平台零风险。
+search = [
+    "sentence-transformers>=3.0",
+    "numpy>=1.24",
+]
+# 可选：大规模时切换到 LanceDB 后端（会拉入 pyarrow 等重依赖）
+lancedb = ["lancedb>=0.13"]
+# 论文模块（M3）
+paper = ["pymupdf4llm>=0.0.17"]
+# Web UI（M5）。刻意不用 Node 前端工具链：
+# Jinja2 服务端渲染 + 原生 JS，零构建步骤，Windows 上 pip 装完即可跑。
+web = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+# MCP Server（M6）。官方 SDK，供 Claude Desktop 等客户端接入
+mcp = ["mcp>=1.2"]
+# Agent 接口全量（HTTP API 复用 web 的 fastapi）
+agent = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "mcp>=1.2",
+]
+# 全量安装。迁移到新机器时用这个。
+# 注意：pip 对不存在的 extra 只给 warning 不报错，
+# 所以这个组必须真实存在，否则用户会以为装全了、实际只有核心依赖。
+all = [
+    "imageio-ffmpeg>=0.5",
+    "faster-whisper>=1.0",
+    "yt-dlp>=2024.8",
+    "rapidocr-onnxruntime>=1.3; python_version < '3.13'",
+    "rapidocr>=3.0; python_version >= '3.13'",
+    "sentence-transformers>=3.0",
+    "numpy>=1.24",
+    "pymupdf4llm>=0.0.17",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "mcp>=1.2",
+]
+
+[project.scripts]
+distill = "distiller.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+distiller = [
+    "store/*.sql",
+    "store/migrations/*.sql",
+    "distill/prompts/*.md",
+    "web/templates/*.html",
+    "web/static/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # starlette 的 TestClient 对 httpx 版本的告警，与本项目代码无关
+    "ignore::DeprecationWarning",
+    "ignore:.*httpx.*:UserWarning",
+]

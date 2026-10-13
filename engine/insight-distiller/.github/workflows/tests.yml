@@ -1,0 +1,57 @@
+name: tests
+
+# 跨平台承诺唯一可靠的保障方式：从第一天就在 macOS 与 Windows 双平台跑测试。
+# 只在单平台测试，迁移时必然踩编码、路径、文件名这些坑。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Smoke test CLI on both platforms
+        run: |
+          distill version
+          distill doctor
+
+      - name: Guard against platform checks outside compat layer
+        shell: bash
+        run: |
+          # 业务代码里不允许出现平台判断，否则迁移时要全项目排查
+          if grep -rn --include=*.py -E "sys\.platform|platform\.system\(\)" src/distiller \
+              | grep -v "src/distiller/compat/"; then
+            echo "::error::平台判断只允许出现在 compat/ 目录内"
+            exit 1
+          fi
+
+      - name: Guard against bare open() without encoding
+        shell: bash
+        run: |
+          # Windows 默认编码非 UTF-8，裸 open() 处理中文必然出错
+          if grep -rn --include=*.py -E "[^.\w]open\(" src/distiller \
+              | grep -v "encoding=" | grep -v "src/distiller/compat/fsio.py"; then
+            echo "::error::请使用 compat.fsio 的读写封装，或显式指定 encoding"
+            exit 1
+          fi

@@ -1,0 +1,35 @@
+{#
+  基础布局。
+
+  刻意不引入 CSS 框架：本工具的页面形态固定，
+  Tailwind/Bootstrap 带来的体积与构建步骤换不回价值。
+#}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Insight Distiller{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">Insight<span>Distiller</span></a>
+  <nav>
+    <a href="/"       class="{{ 'on' if nav == 'library' }}">内容库</a>
+    <a href="/ask"    class="{{ 'on' if nav == 'ask' }}">问答</a>
+    <a href="/graph"  class="{{ 'on' if nav == 'graph' }}">图谱</a>
+    <a href="/review" class="{{ 'on' if nav == 'review' }}">重温<span id="nav-due" class="badge hidden"></span></a>
+    <a href="/brief"  class="{{ 'on' if nav == 'brief' }}">简报</a>
+  </nav>
+  <span class="spacer"></span>
+  <span id="cost" class="cost" title="本月 LLM 花费"></span>
+</header>
+
+<main class="{% block main_class %}wrap{% endblock %}">
+{% block content %}{% endblock %}
+</main>
+
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

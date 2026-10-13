@@ -1,0 +1,278 @@
+# ============================================================
+# Insight Distiller 配置文件（复制为 config.yaml 后修改）
+# 一切模型能力均可配置：可全本地、可全 API、可混合
+# ============================================================
+
+# ---------- 1. LLM 供应商池：想加几个加几个 ----------
+providers:
+  deepseek:                          # 默认主力：中文强、便宜
+    type: openai_compat             # 走 OpenAI 兼容协议
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}    # 从环境变量读，不写进文件
+    models:
+      chat: deepseek-chat
+      reason: deepseek-reasoner     # 复杂 reduce / 追问时用
+    price_per_1m: { input: 0.14, output: 0.28 }   # 用于成本统计（美元）
+
+  ollama:                            # 本地零成本
+    type: ollama
+    base_url: http://localhost:11434
+    models:
+      chat: qwen3:14b
+    price_per_1m: { input: 0, output: 0 }
+
+  openai:
+    type: openai_compat
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    models: { chat: gpt-4.1-mini, reason: o4-mini }
+
+  claude:
+    type: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
+    models: { chat: claude-sonnet-4-5 }
+
+  kimi:                              # 超长上下文，整篇不切块
+    type: openai_compat
+    base_url: https://api.moonshot.cn/v1
+    api_key: ${MOONSHOT_API_KEY}
+    models: { chat: kimi-k2-0905-preview }
+
+# ---------- 2. 按任务分别指定模型（核心可配置点）----------
+# 每个任务独立选 provider，随时改；改 profile 可整体切换路线
+tasks:
+  map:        { provider: deepseek, model: chat,   temperature: 0.1 }  # 分块提取，量大
+  reduce:     { provider: deepseek, model: reason, temperature: 0.3 }  # 汇总成结论
+  qa:         { provider: deepseek, model: reason, temperature: 0.2 }  # 基于知识库问答
+  # 问答体内容整理成答案卡片（标题即问题的那类）。
+  # 单期只 1000 字左右，用 chat 足够；批量跑 200+ 期时比 reason 便宜好几倍。
+  qa_card:    { provider: deepseek, model: chat,   temperature: 0.2 }
+  translate:  { provider: deepseek, model: chat,   temperature: 0.2 }
+  fallback:   { provider: ollama,   model: chat }                      # API 挂了自动降级
+
+# 预设方案：`distill --profile local` 一键整体切换
+profiles:
+  local:   { map: ollama,   reduce: ollama,   qa: ollama,   qa_card: ollama }    # 全本地零成本
+  hybrid:  { map: ollama,   reduce: deepseek, qa: deepseek, qa_card: deepseek }  # 省钱且质量够
+  quality: { map: deepseek, reduce: claude,   qa: claude,   qa_card: claude }    # 质量优先
+
+# ---------- 3. 转写（ASR）----------
+transcribe:
+  enabled: true
+  prefer_subtitle: true         # 有官方/CC字幕就直接用，跳过 ASR（快约 50 倍且免费）
+  # faster_whisper 基于 CTranslate2，三平台通用，是基准实现。
+  # mlx_whisper 仅 Apple Silicon 可用，作为可选加速——
+  # 基准实现必须跨平台，否则迁移等于重写。
+  engine: faster_whisper
+  model: large-v3               # 中文场景不建议降到 medium，错字率明显更高
+  compute_type: auto            # auto 按平台探测：cuda→float16 / cpu→int8
+  language: null                # null=自动检测，中英混说友好
+  vad: true                     # 切静音，省算力 + 防幻觉重复
+  diarize: false                # 说话人分离，访谈类才开（最慢的一环）
+  hotwords:                     # 术语表，大幅降低专有名词错字
+    - RAG
+    - Transformer
+    - 向量数据库
+
+# ---------- 4. 检索与问答 ----------
+retrieval:
+  # 默认小模型（约 100MB，加载快）。中文长文效果要求更高可换 BAAI/bge-m3（约 2.2GB）
+  embedding_model: BAAI/bge-small-zh-v1.5
+  # sqlite：向量存 SQLite BLOB + numpy 计算，零额外依赖，个人规模足够
+  # lancedb：数万块以上时可切换，检索接口不变
+  backend: sqlite
+  hybrid: true                  # 向量 + BM25 混合召回（专有名词/数字必须靠 BM25）
+  top_k: 30                     # 各路召回数量
+  top_n: 6                      # 最终送入 LLM 的片段数
+  chunk_size: 600               # 检索块比浓缩块更小，引用定位更精确
+  chunk_overlap: 80
+  auto_index: true              # 消化后自动建索引；关掉可用 `distill index` 批量补建
+
+# ---------- 5. 论文模块 ----------
+# 数据源分工基于实测（见 DECISIONS.md）：
+#   arXiv 最稳定无限流 → 元数据与全文主力
+#   Semantic Scholar → 引文图谱（references/citations），需退避重试
+#   OpenAlex → 仅单篇查询作补充（list 类请求已改为付费额度制）
+paper:
+  fulltext: true              # 下载 PDF 取全文；false 则只用摘要（快但覆盖面小）
+  cache_ttl_days: 30          # 引文关系变化极慢，长缓存能大幅减少限流
+  mailto: null                # 填邮箱可进 OpenAlex/Crossref 的 polite pool
+  similar_per_group: 5        # 相似论文每组展示数量
+  lineage_limit: 8            # 阅读路径最多几步
+
+# ---------- 6. 知识关联 ----------
+# 关联必须自动化：靠手动打标签/双链的成本高到必然放弃，
+# 这是所有笔记工具沦为「写入即遗忘」的根因。
+knowledge:
+  auto_link: true                 # 入库时自动建立关联
+  extract_entities: true
+  extract_claims: true
+  claim_min_density: 35           # 只对密度达标的内容抽 claim（水文没有可用知识）
+  min_relation_confidence: 0.7    # 只提示高置信度关系，否则变成骚扰
+  max_relations_per_source: 5
+  entity_min_mentions: 2          # 入图谱门槛，防止垃圾实体淹没
+  max_entities_per_source: 25
+  # 自定义领域规则，会与内置（finance/tech/photography）合并
+  domains:
+    finance:
+      keywords: [可转债, REITs, 摊余成本法]
+    # 也可新增领域：
+    # 半导体:
+    #   keywords: [晶圆, 制程, 光刻, 封装, 良率]
+    #   default_max_staleness_days: 365
+
+# ---------- 7. 重温与沉淀 ----------
+# 不是所有内容都值得重温：全部入队只会让重温变成负担，最后必然放弃
+# （这是所有 PKM 工具的通病）。因此入队要筛选。
+review:
+  auto_enqueue: true          # 消化后自动判定是否加入重温队列
+  min_density: 45             # 密度门槛：水文不占用重温时间
+  require_value: true         # 要求有「可执行项/疑问/关联」之一才入队
+  daily_limit: 8              # 每次 review 最多推几条
+  brief_days: 7               # 简报统计区间
+  vault_dir: null             # Obsidian 库目录，如 ~/Obsidian/知识库
+
+# ---------- 8. 浓缩策略 ----------
+distill:
+  chunk_size: 2000
+  chunk_overlap: 200
+  language: zh                  # 输出语言；英文源可自动转中文结论
+  sections:                     # 想要哪些板块，自由开关
+    tldr: true
+    outline: true
+    concepts: true
+    quotes: true
+    actions: true
+    open_questions: true
+    contrarian: true            # 反直觉观点，信息价值最高
+  # 密度低于此分只做一次汇总，不逐块精读，避免在水文上烧钱
+  skip_detail_below: 20
+
+# ---------- 6. 采集 ----------
+ingest:
+  cookies_from_browser: chrome  # 小红书/知乎/B站部分字幕需登录态
+  proxy: null
+  timeout: 30
+  retry: 2
+  # 正文字数低于此值时判定为「图片型文章」（公众号常见），自动触发 OCR
+  ocr_trigger_chars: 200
+  # auto 优先 RapidOCR：三平台通用，保证 macOS 与 Windows 结果一致。
+  # ocrmac 仅 macOS 可用，作为可选加速；off 完全关闭。
+  ocr_engine: auto            # auto | rapidocr | ocrmac | off
+
+  # ---- 平台开关与参数覆盖 ----
+  # 平台之间风控强度差异很大，全局一套参数不够用。
+  # 未列出的平台默认启用、沿用全局参数。
+  #
+  # 注意：禁用某平台后，该平台链接会**明确报错**而非降级到通用抽取——
+  # 小红书正文在嵌套 JSON 里、B 站正文在字幕接口里，
+  # 通用抽取只会拿到空内容或噪声，静默降级等于给你残缺数据却不说原因。
+  platforms:
+    bilibili:
+      enabled: true
+      # 搜索接口比普通页面敏感得多：频繁请求会返回 code=0 + 空结果，
+      # 看起来像「没搜到」而不是「被限流」，极易误判。
+      rate_limit_sec: 2.0
+      # cookies_from_browser: edge    # 可单独覆盖全局
+    xhs:
+      enabled: true
+      rate_limit_sec: 3.0        # 小红书风控最严，连续请求极易触发验证
+    wechat:
+      enabled: true
+      rate_limit_sec: 1.0
+    zhihu:
+      enabled: true
+    web:
+      enabled: true
+
+  # ---- 声明式站点规则：不写代码加一个站点 ----
+  #
+  # 适用边界（很重要，否则会有错误期待）：
+  #   能配置 —— 正文在固定 DOM 节点的站点（个人博客、新闻、文档站）
+  #   不能配 —— 需要请求签名的（B 站字幕 WBI、抖音设备指纹）、
+  #             内容在嵌套 JSON 且路径会变的（小红书）、
+  #             需要私有 API 拼接的（知乎）、纯前端渲染的
+  #
+  # 一句话：声明式解决「解析」，解决不了「拿到」。
+  #
+  # 选择器支持 CSS；以 / 开头则按 XPath 处理。
+  sites: []
+  # sites:
+  #   - name: ruanyifeng
+  #     match: ["ruanyifeng.com"]
+  #     title: "h1#page-title"
+  #     content: "div#main-content"
+  #     author: null
+  #     remove: ["div.comments", "nav", "footer"]   # 先删噪声再抽正文
+  #
+  #   - name: paulgraham
+  #     match: ["paulgraham.com"]
+  #     title: "/html/body//font[1]/b"              # 少数情况只有 XPath 能表达
+  #     content: "font"
+
+# ---------- 7. 存储与导出 ----------
+storage:
+  # null = 项目内 ./data。库内只存相对路径，整个项目文件夹可直接拷到 Windows 使用
+  data_dir: null
+  use_system_dir: false       # true 则用系统标准目录（platformdirs）
+  keep_audio: false           # 转写完删音频省空间（转写文本永久缓存）
+export:
+  obsidian_vault: null        # 填路径则可 `distill export` 直送 Obsidian
+  frontmatter: true
+
+# 注：领域分区规则已内置（finance / tech / photography），
+# 如需调整或新增，在上面的 knowledge.domains 段配置。
+
+# ---------- 9. Agent 接口（M6）----------
+agent:
+  enabled: true
+  host: 127.0.0.1               # 默认只绑本机。改成 0.0.0.0 必须同时配 token，否则拒绝启动
+  port: 8787
+  # 读写 token 分离：写接口风险远高于读
+  read_token: null              # 如 ${KB_READ_TOKEN}
+  write_token: null             # 如 ${KB_WRITE_TOKEN}
+  allow_write: false            # 写接口默认关闭；关闭时 MCP 也不暴露 kb_ingest
+  default_token_budget: 2000    # 返回结果的默认 token 预算，由知识库自己裁剪
+  # 语义检索相关性门槛。低于此值视为不相关——否则查库里没有的主题
+  # 也会返回一堆无关 claim，coverage 判成 sufficient，agent 就会硬答。
+  semantic_min_sim: 0.50
+
+  # 领域级规则。理财是本设计的主要驱动场景：
+  # 金融知识会过期，而把自媒体观点当客观事实是最常见的亏钱方式。
+  domains:
+    finance:
+      extract_numeric: true              # 强制抽取数字与单位，供 agent 计算
+      require_as_of: true                # 无时间标注的结论降低可信度
+      default_max_staleness_days: 180    # 半年前的理财结论默认标记为陈旧
+      authority_weights:                 # 检索排序时的权威度加权
+        official: 1.0                    # 央行、交易所、监管
+        peer_reviewed: 0.9
+        media: 0.6
+        self_media: 0.4                  # 自媒体理财内容大幅降权
+      disclaimer: true
+      disclaimer_text: >-
+        以下内容来自个人知识库的信息整理，不构成投资建议。
+        请注意区分事实与观点，并自行核实时效性。
+    tech:
+      extract_numeric: true
+      require_as_of: false               # 技术结论过期没那么快
+      default_max_staleness_days: 730
+      authority_weights:
+        peer_reviewed: 1.0
+        official: 0.95
+        media: 0.7
+        self_media: 0.6
+
+# ---------- 10. 订阅自动化 ----------
+# 把自然语言选材固化成定期任务。挂到 cron / 任务计划程序里即可。
+# 注意：订阅运行时无法反问，所以指令要先用 distill plan 确认能被正确理解。
+subscribe:
+  default_interval_hours: 24
+  default_max_items: 5          # 单次上限，防止一次跑爆预算
+  default_min_density: 45       # 低于此密度直接丢弃，不浪费后续成本
+  digest_dir: null              # 日报导出目录，null 则只打印
+
+# ---------- 11. 成本护栏 ----------
+limits:
+  monthly_budget_usd: 10        # 超预算自动降级到 ollama
+  warn_per_task_usd: 0.3

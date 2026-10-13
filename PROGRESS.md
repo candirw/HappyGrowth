@@ -16,34 +16,39 @@
 - [x] 各模块设计（`docs/04_各模块设计.md`）
 - [x] Roadmap 与风险（`docs/05_Roadmap与风险.md`）
 - [x] 正式 PLAN / PRD / PROGRESS / DECISIONS 整理完毕
-- [ ] **git 仓库初始化** ← 当前步骤
+- [x] git 仓库初始化 + 推送到 GitHub（`candirw/HappyGrowth`，SSH 认证已配置）
+- [x] **目录分区落地**：`engine/`（复用引擎）/ `kb/`（真相源）/ `projects/`（代码产物）/ `plans/`（计划复盘）/ `data/`（原始输入），各含说明 README
+- [x] `insight-distiller` 迁入 `engine/insight-distiller/`（已排除 `.venv`/`data/`/`cases/`/真实 `config.yaml`，1.8G → 1.5M）
+- [x] `projects/_template/` 脚手架（README/PLAN/PROGRESS/DECISIONS/.gitignore）
 - [ ] 确认 B1（手环能否自动导出）
-- [ ] 开工 C1（`kb/` 目录骨架 + 接入检索层）
+- [ ] 确认 B2（仓库 Public/Private，影响 `kb/`、`data/` 能否开始写真实内容）
+- [ ] 把 `kb/` 接入 `engine/insight-distiller` 的摄入链路（C1 剩余工作）
+- [ ] 决定是否把 `策略研究档案/` 等现有项目迁入 `projects/`（需先过一遍是否含机密信息）
 
 ## 下一步
 
-1. `git init` 本规划仓库，首次提交
-2. 用户确认 B1（手环数据导出方式）—— 这是唯一可能让 Roadmap 重排的变量
-3. 开 C1：建 `kb/` 目录（`ideas/docs/frontier/inbox`）+ 三类 frontmatter 校验 + 接入 `insight-distiller`
+1. 用户确认 **B1**（手环数据导出方式）和 **B2**（仓库可见性）
+2. 把 `kb/` 目录接进 `engine/insight-distiller` 的摄入链路，跑通一次真实入库+关联提示
+3. 若决定迁入现有项目（`策略研究档案/` 等），先逐一过一遍是否含工作机密信息再决定公开/私有
 
 ## 已知坑 / 待确认
 
 | # | 内容 | 影响 |
 |---|---|---|
 | B1 | 手环型号 + 能否自动导出 CSV/API（还是只能截图） | 决定 Part 5 能否"零人工"运行，**最高优先级** |
+| B2 | 仓库 Public/Private 怎么选（ADR-011） | `kb/`、`data/` 能否开始写真实内容 |
 | Q1 | "一小群人"具体几人、信任边界（公开/私密/部分可见） | Part 1 权限设计 |
 | Q3 | 团队里谁写代码、人数 | Part 3 协作模型 |
 | Q4 | AI 文娱产出是自用还是对外分发 | 是否涉及版权合规 |
-| Q5 | `kb/` 仓库公开还是私有 | 若公开，灵感类内容是否适合公开需重新评估 |
-| Q6 | 已有 `策略研究档案/` 是否迁入新的 `kb/` 目录约定 | 迁移成本 vs 统一管理收益，待定 |
+| Q6 | 已有 `策略研究档案/` 等现有项目是否迁入 `projects/` | 迁移成本 + 是否涉及机密信息，当前未自动迁入 |
 
 ## Checkpoint 进度
 
 | Checkpoint | 状态 |
 |---|---|
-| C1 地基 | 未开始 |
+| C1 地基 | **进行中**：目录骨架 + engine 已就绪，待接入检索链路 + 确认 B2 |
 | C2 计划闭环 | 未开始（依赖 B1） |
-| C3 项目模板 | 未开始 |
+| C3 项目模板 | **部分完成**：`projects/_template/` 已就绪 |
 | C4 核查能力 | 未开始 |
 | C5 外部供料 | 未开始 |
 | C6 文娱应用 | 未开始 |
