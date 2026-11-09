@@ -1,0 +1,27 @@
+# 个人库存配置 —— 含自己的酒单，不要提交
+inventory.js
+
+# 系统垃圾文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 依赖（本项目无依赖，防止误提交）
+node_modules/
+
+# 导出与备份（可能含个人评分数据）
+*.json
+!package.json
+品鉴记录_*.md
+品鉴备份_*.json
+
+# 测试与临时文件
+_test/
+_p/
+_t.html
+*.log
